@@ -1,121 +1,136 @@
 package mgo
 
 import (
-	"github.com/smartystreets/assertions/should"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/yaziming/mgo/bson"
-
 	"testing"
+	"time"
 )
 
-func TestDatabase_Find(t *testing.T) {
+func TestCollection_Index(t *testing.T) {
 	MongoTest(t, func(ctx *TestContext) {
-		Convey("Test CollectionNames", func() {
-			i, err := ctx.mongoC.Exec(ctx, []string{
-				"mongo",
-				"--eval",
-				"db.items.insertMany([\n      {  item: \"large box\", qty: 20, user: ObjectId() },\n      {  item: \"small box\", qty: 55,user: ObjectId() },\n      { _id:ObjectId(\"5ebac68c2211678e6c303019\"), item: \"medium box\", qty: 30, user: ObjectId()},\n      {  item: \"medium1 box\", qty: 35, user: \"\"},\n      {  item: \"medium2 box\", qty: 35},\n])",			})
+
+		session := ctx.mongo
+		c := session.C("test_collection_index")
+		indexes, err := c.Indexes()
+		So(err, ShouldBeNil)
+		So(indexes, ShouldHaveLength, 0)
+		Convey("drop all indexes when coll not exits.", func() {
+			err := c.DropAllIndexes()
+			So(err, ShouldBeError)
+			So(err.Error(), ShouldEqual, "(NamespaceNotFound) ns not found")
+		})
+		Convey("ensure index with key string", func() {
+			err := c.EnsureIndexKey("name")
 			So(err, ShouldBeNil)
-			So(i, ShouldEqual, 0)
-			session := ctx.mongo
-			c := session.C("items")
-			type test struct {
-				Id     bson.ObjectId `json:"_id" bson:"_id,omitempty"`
-				Qty    int           `json:"qty"`
-				UserId bson.ObjectId `json:"user_id" bson:"user_id"`
-			}
-			Convey("Test Find Where nil", func() {
-				var item test
-				err = c.Find(nil).One(&item)
+			err = c.EnsureIndexKey("name2")
+			So(err, ShouldBeNil)
+			indexes, err := c.Indexes()
+			So(err, ShouldBeNil)
+			So(indexes, ShouldHaveLength, 3)
+			Convey("drop all indexes", func() {
+				err := c.DropAllIndexes()
 				So(err, ShouldBeNil)
-				So(item, ShouldNotEqual, test{})
-			})
-			Convey("Test One Func Should Auto Fill Mongo Don`t Exists Field To Mongo ObjectID", func() {
-				var item test
-				err = c.Find(bson.M{
-					"item": "medium2 box",
-				}).One(&item)
+				indexes, err := c.Indexes()
 				So(err, ShouldBeNil)
-				So(item.UserId, ShouldEqual, bson.NilObjectID)
-				So(item.Id, ShouldNotEqual, bson.NilObjectID)
-			})
-			Convey("Test Find All", func() {
-				var item []test
-				err = c.Find(bson.M{
-					"item": "medium2 box",
-				}).All(&item)
-				So(err, ShouldBeNil)
-				So(len(item), ShouldEqual, 1)
-				So(item[0].UserId, ShouldEqual, bson.NilObjectID)
-				So(item[0].Id, ShouldNotEqual, bson.NilObjectID)
-				err = c.Find(nil).All(&item)
-				So(err, ShouldBeNil)
-				So(len(item), ShouldEqual, 5)
-			})
-			Convey("Test FindId", func() {
-				var result test
-				err :=c.FindId("5ebac68c2211678e6c303019").One(&result)
-				So(err,ShouldBeNil)
-				err =c.FindId(bson.ObjectIdHex("5ebac68c2211678e6c303019")).One(&result)
-				So(err,ShouldBeNil)
-			})
-			Convey("Test Find And Apply", func() {
-				change := Change{
-					Update: bson.M{
-						"$set": bson.M{
-							"item": "medium2 box1",
-						},
-					},
-					Upsert:    false,
-					Remove:    false,
-					ReturnNew: true,
-				}
-				var result test
-				info, err := c.Find(bson.M{"item": "medium2 box"}).Apply(change, &result)
-				So(err, ShouldBeNil)
-				So(info.Updated, ShouldEqual, 1)
-			})
-			Convey("delete all document", func() {
-				ch,err:=c.RemoveAll(nil)
-				So(err,ShouldBeNil)
-				So(ch.Removed,ShouldBeGreaterThan,1)
-			})
-			Convey("Drop Collection", func() {
-				err :=c.Drop()
-				So(err,ShouldBeNil)
-				collections,err:=session.DatabaseNames()
-				So(err,ShouldBeNil)
-				So(collections,should.NotContain,"items")
+				So(indexes, ShouldHaveLength, 1)
+				So(indexes[0].Key, ShouldHaveLength, 1)
+				So(indexes[0].Key, ShouldContain, "_id")
 			})
 		})
+		Convey("ensure index with mgo.Index", func() {
+			err := c.EnsureIndex(Index{
+				Key:           []string{"userID"},
+				Unique:        true,
+				Background:    false,
+				Sparse:        false,
+				PartialFilter: nil,
+				ExpireAfter:   5 * time.Minute,
+				Name:          "user_id",
+			})
+			Convey("assert ensure index", func() {
+				So(err, ShouldBeNil)
+				indexes, err := c.Indexes()
+				So(err, ShouldBeNil)
+				So(indexes, ShouldHaveLength, 2)
+			})
+			Convey("drop one index", func() {
+				err := c.DropIndex("userID")
+				So(err, ShouldBeNil)
+				indexes, err := c.Indexes()
+				So(err, ShouldBeNil)
+				So(indexes, ShouldHaveLength, 1)
+			})
+		})
+
 	})
 }
 
-func Test2(t *testing.T){
+func TestCollection_Bulk(t *testing.T) {
 	MongoTest(t, func(ctx *TestContext) {
+		var err error
 		session := ctx.mongo
-		c := session.C("items")
-		doc := bson.M{
-			"name":"1",
-		}
-		err:=c.Insert(doc)
-		So(err,ShouldBeNil)
-		count,err:=c.Count(nil)
-		So(err,ShouldBeNil)
-		So(count,ShouldEqual,1)
-		err =c.Update(bson.M{"name":"1"},bson.M{"w":1})
-		So(err,ShouldBeNil)
-		err =c.Update(bson.M{"w":1},bson.M{"$set":bson.M{"age":1}})
-		So(err,ShouldBeNil)
+		coll := session.DB("mydb").C("mycoll")
+		bulk := coll.Bulk()
+		bulk.Insert(M{"n": 1})
+		bulk.Insert(M{"n": 2}, M{"n": 3})
+		r, err := bulk.Run()
+		So(err, ShouldBeNil)
+		So(r, ShouldHaveSameTypeAs, &BulkResult{})
 
-		count,err = c.Find(bson.M{"age":1,"w":1}).Count()
-		So(err,ShouldBeNil)
-		So(count,ShouldEqual,1)
-		_=c.Insert(bson.M{"a":1},bson.M{"a":2})
-		err = c.Update(nil,bson.M{"$set":bson.M{"d":1}},true)
-		So(err,ShouldBeNil)
-		count,err = c.Find(bson.M{"d":1}).Count()
-		So(err,ShouldBeNil)
-		So(count,ShouldEqual,1)
+		type doc struct{ N int }
+		var res []doc
+		err = coll.Find(nil).Sort("n").All(&res)
+		So(err, ShouldBeNil)
+		So(res, ShouldResemble, []doc{{1}, {2}, {3}})
+	})
+}
+
+func TestCollection_DropCollection(t *testing.T) {
+	MongoTest(t, func(ctx *TestContext) {
+		var err error
+		session := ctx.mongo
+		db := session.DB("db1")
+		_ = db.C("col1").Insert(M{"_id": 1})
+		_ = db.C("col2").Insert(M{"_id": 1})
+
+		err = db.C("col1").DropCollection()
+		So(err, ShouldBeNil)
+
+		names, err := db.CollectionNames()
+		So(err, ShouldBeNil)
+		So(filterDBs(names), ShouldResemble, []string{"col2"})
+
+		err = db.C("col2").DropCollection()
+		So(err, ShouldBeNil)
+
+		names, err = db.CollectionNames()
+		So(err, ShouldBeNil)
+		So(len(filterDBs(names)), ShouldEqual, 0)
+	})
+}
+
+func TestCollection_CreateCollectionCapped(t *testing.T) {
+	MongoTest(t, func(ctx *TestContext) {
+		var err error
+		session := ctx.mongo
+		coll := session.DB("mydb").C("mycoll")
+
+		info := &CollectionInfo{
+			Capped:   true,
+			MaxBytes: 1024,
+			MaxDocs:  3,
+		}
+		err = coll.Create(info)
+		So(err, ShouldBeNil)
+
+		ns := []int{1, 2, 3, 4, 5}
+		for _, n := range ns {
+			err := coll.Insert(M{"n": n})
+			So(err, ShouldBeNil)
+		}
+
+		n, err := coll.Find(nil).Count()
+		So(err, ShouldBeNil)
+		So(n, ShouldEqual, 3)
 	})
 }

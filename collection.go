@@ -4,31 +4,26 @@ import (
 	"context"
 	"fmt"
 	"github.com/yaziming/mgo/bson"
-
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"sort"
+	"strings"
 )
 
-// Collection session-driver collection
+// Collection session-driver coll
 type Collection struct {
 	collection *mongo.Collection
+	err        error
+	db         *Database
 }
 
-func (c *Collection) Drop() error {
-	return c.collection.Drop(context.TODO())
+func (c *Collection) DropCollection() error {
+	return c.collection.Drop(nil)
 }
 
-// UpdateID updates a single document in the collection by id
+// UpdateID updates a single document in the coll by id
 func (c *Collection) FindId(id interface{}) *Query {
-	var bsonID bson.ObjectId
-	switch newId := id.(type) {
-	case string:
-		bsonID = bson.ObjectIdHex(newId)
-	case bson.ObjectId:
-		bsonID = newId
-	default:
-	}
-	return c.Find(bson.D{{Key: "_id", Value: bsonID}})
+	return c.Find(bson.D{{Key: "_id", Value: queryID(id)}})
 }
 
 // Find finds docs by given filter
@@ -36,24 +31,24 @@ func (c *Collection) Find(filter interface{}) *Query {
 	if filter == nil {
 		filter = bson.D{}
 	}
-	return &Query{op: op{
-		filter: filter,
-	}, collection: c.collection}
+	return &Query{
+		query: query{
+			op: op{
+				filter: filter,
+			},
+		},
+		coll: c,
+		err:  c.err,
+	}
 }
 
-// Insert inserts a single document into the collection.
+// Insert inserts a single document into the coll.
 func (c *Collection) Insert(documents ...interface{}) (err error) {
-	_, err = c.InsertWithResult(documents...)
-	return err
+	return c.InsertCtx(nil, documents...)
 }
 func (c *Collection) InsertCtx(ctx context.Context, documents ...interface{}) (err error) {
 	_, err = c.InsertCtxWithResult(ctx, documents...)
 	return err
-}
-
-// InsertWithResult inserts a single document into the collection and returns insert one result.
-func (c *Collection) InsertWithResult(documents ...interface{}) (result *mongo.InsertManyResult, err error) {
-	return c.InsertCtxWithResult(context.TODO(), documents...)
 }
 
 // InsertAllWithResult inserts the provided documents and returns insert many result.
@@ -61,11 +56,65 @@ func (c *Collection) InsertCtxWithResult(ctx context.Context, documents ...inter
 	result, err = c.collection.InsertMany(ctx, documents)
 	return
 }
-func (c *Collection) Update(selector interface{}, update interface{}, upsert ...bool) (err error) {
-	return c.UpdateOneCtx(context.TODO(), selector, update, upsert...)
+func (c *Collection) Update(selector interface{}, update interface{}) (err error) {
+	return c.UpdateOneCtx(nil, selector, update, false)
+}
+func (c *Collection) UpdateAll(selector interface{}, update interface{}) (info *ChangeInfo, err error) {
+	return c.UpdateAllCtx(nil, selector, update)
+}
+func (c *Collection) UpdateAllCtx(ctx context.Context, selector interface{}, update interface{}) (info *ChangeInfo, err error) {
+	result, err := c.UpdateAllCtxWithResult(ctx, selector, update, false)
+	if err != nil {
+		return
+	}
+	return &ChangeInfo{
+		Updated:    int(result.ModifiedCount),
+		Removed:    0,
+		Matched:    int(result.MatchedCount),
+		UpsertedId: result.UpsertedID,
+	}, err
 }
 
+// UpdateID updates a single document in the coll by id
+func (c *Collection) UpdateId(id interface{}, update interface{}) error {
+	return c.Update(bson.M{"_id": queryID(id)}, update)
+}
+func (c *Collection) Upsert(selector interface{}, update interface{}) (info *ChangeInfo, err error) {
+	r, err := c.UpdateOneCtxWithResult(context.Background(), selector, update, true)
+	if err != nil {
+		return
+	}
+	return &ChangeInfo{
+		Updated:    int(r.ModifiedCount),
+		Removed:    0,
+		Matched:    int(r.MatchedCount),
+		UpsertedId: r.UpsertedID,
+	}, nil
+}
+
+// UpdateAll updates multiple documents in the coll.
+func (c *Collection) UpdateAllCtxWithResult(ctx context.Context, selector interface{}, update interface{}, upsert ...bool) (*mongo.UpdateResult, error) {
+	if selector == nil {
+		selector = bson.D{}
+	}
+	var err error
+	opt := options.Update()
+	if len(upsert) > 0 {
+		opt.SetUpsert(upsert[0])
+	}
+
+	var updateResult *mongo.UpdateResult
+	if updateResult, err = c.collection.UpdateMany(ctx, selector, update, opt); err != nil {
+		return updateResult, err
+	}
+	return updateResult, nil
+}
 func (c *Collection) ReplaceOneCtx(ctx context.Context, selector interface{}, update interface{}, upsert ...bool) (err error) {
+	_, err = c.ReplaceOneCtxWithResult(ctx, selector, update, upsert...)
+	return err
+}
+func (c *Collection) ReplaceOneCtxWithResult(ctx context.Context, selector interface{}, update interface{}, upsert ...bool) (result *mongo.UpdateResult, err error) {
+
 	if selector == nil {
 		selector = bson.D{}
 	}
@@ -73,16 +122,29 @@ func (c *Collection) ReplaceOneCtx(ctx context.Context, selector interface{}, up
 	if len(upsert) > 0 {
 		opt.SetUpsert(upsert[0])
 	}
-
-	_, err = c.collection.ReplaceOne(ctx, selector, update, opt)
-	return err
+	result, err = c.collection.ReplaceOne(ctx, selector, update, opt)
+	if err != nil {
+		return
+	}
+	if result.UpsertedCount == 0 && result.MatchedCount == 0 {
+		return result, ErrNotFound
+	}
+	return
 }
 
-// Update updates a single document in the collection.
+// Update updates a single document in the coll.
 func (c *Collection) UpdateOneCtx(ctx context.Context, selector interface{}, update interface{}, upsert ...bool) (err error) {
-	err = c.ReplaceOneCtx(ctx, selector, update, upsert...)
+	_, err = c.UpdateOneCtxWithResult(ctx, selector, update, upsert...)
+
+	return err
+
+}
+
+// UpdateOneCtxWithResult updates a single document in the coll and returns update result.
+func (c *Collection) UpdateOneCtxWithResult(ctx context.Context, selector interface{}, update interface{}, upsert ...bool) (result *mongo.UpdateResult, err error) {
+	result, err = c.ReplaceOneCtxWithResult(ctx, selector, update, upsert...)
 	if err == nil || err.Error() != "replacement document cannot contains keys beginning with '$" {
-		return err
+		return
 	}
 	if selector == nil {
 		selector = bson.D{}
@@ -92,98 +154,39 @@ func (c *Collection) UpdateOneCtx(ctx context.Context, selector interface{}, upd
 	if len(upsert) > 0 {
 		opt.SetUpsert(upsert[0])
 	}
-	_, err = c.collection.UpdateOne(ctx, selector, update, opt)
-	return err
-
-}
-
-// UpdateWithResult updates a single document in the collection and returns update result.
-func (c *Collection) UpdateWithResult(selector interface{}, update interface{}, upsert ...bool) (result *mongo.UpdateResult, err error) {
-	if selector == nil {
-		selector = bson.D{}
+	result, err = c.collection.UpdateOne(ctx, selector, update, opt)
+	if err != nil {
+		return
 	}
-
-	opt := options.Update()
-	for _, arg := range upsert {
-		if arg {
-			opt.SetUpsert(arg)
-		}
+	if result.UpsertedCount == 0 && result.MatchedCount == 0 {
+		return result, ErrNotFound
 	}
-
-	result, err = c.collection.UpdateOne(context.TODO(), selector, update, opt)
-	return
-}
-
-// UpdateID updates a single document in the collection by id
-func (c *Collection) UpdateId(id interface{}, update interface{}) error {
-	var bsonID bson.ObjectId
-	switch newId := id.(type) {
-	case string:
-		bsonID = bson.ObjectIdHex(newId)
-	case bson.ObjectId:
-		bsonID = newId
-	default:
-	}
-	return c.Update(bson.M{"_id": bsonID}, update)
-}
-
-// UpdateAll updates multiple documents in the collection.
-func (c *Collection) UpdateAll(selector interface{}, update interface{}, upsert ...bool) (*mongo.UpdateResult, error) {
-	if selector == nil {
-		selector = bson.D{}
-	}
-
-	var err error
-
-	opt := options.Update()
-	for _, arg := range upsert {
-		if arg {
-			opt.SetUpsert(arg)
-		}
-	}
-
-	var updateResult *mongo.UpdateResult
-	if updateResult, err = c.collection.UpdateMany(context.TODO(), selector, update, opt); err != nil {
-		return updateResult, err
-	}
-	return updateResult, nil
+	return result, err
 }
 
 func (c *Collection) RemoveId(id interface{}) error {
-	return c.Remove(bson.D{{Key: "_id", Value: id}})
+	return c.Remove(bson.D{{Key: "_id", Value: queryID(id)}})
 }
 
-// Remove deletes a single document from the collection.
-func (c *Collection) Remove(selector interface{}) error {
+// Remove deletes a single document from the coll.
+func (c *Collection) Remove(selector interface{}) (err error) {
+
 	if selector == nil {
 		selector = bson.D{}
 	}
-	var err error
-	if _, err = c.collection.DeleteOne(context.TODO(), selector); err != nil {
+	if _, err = c.collection.DeleteOne(nil, selector); err != nil {
 		return err
 	}
 	return nil
 }
 
-// RemoveID deletes a single document from the collection by id.
-func (c *Collection) RemoveID(id interface{}) error {
-	var bsonID bson.ObjectId
-	switch newId := id.(type) {
-	case string:
-		bsonID = bson.ObjectIdHex(newId)
-	case bson.ObjectId:
-		bsonID = newId
-	default:
-	}
-	return c.Remove(bson.M{"_id": bsonID})
-}
-
-// RemoveAll deletes multiple documents from the collection.
+// RemoveAll deletes multiple documents from the coll.
 func (c *Collection) RemoveAll(selector interface{}) (info *ChangeInfo, err error) {
+
 	if selector == nil {
 		selector = bson.D{}
 	}
-	mResult, err := c.collection.DeleteMany(context.TODO(), selector)
+	mResult, err := c.collection.DeleteMany(nil, selector)
 	if err != nil {
 		return
 	}
@@ -191,106 +194,63 @@ func (c *Collection) RemoveAll(selector interface{}) (info *ChangeInfo, err erro
 		Removed: int(mResult.DeletedCount),
 	}, nil
 }
+func (c *Collection) Count() (count int, err error) {
+	return c.CountBy(nil)
+}
 
 // Count gets the number of documents matching the filter.
-func (c *Collection) Count(selector interface{}) (int, error) {
+func (c *Collection) CountBy(selector interface{}) (count int, err error) {
+
 	if selector == nil {
 		selector = bson.D{}
 	}
-	var err error
-	var count int64
-	count, err = c.collection.CountDocuments(context.TODO(), selector)
-	return int(count), err
+	var count64 int64
+	count64, err = c.collection.CountDocuments(context.TODO(), selector)
+	return int(count64), err
 }
-func (s *Collection) Pipe(pipeline interface{}) *Pipe {
-	return &Pipe{pipeline: pipeline, collection: s.collection}
-}
-
-// Limit specifies a limit on the number of results.
-// A negative limit implies that only 1 batch should be returned.
-func (s *Session) Limit(limit int) *Session {
-	tmp := int64(limit)
-
-	s.limit = &tmp
-	return s
+func (c *Collection) Pipe(pipeline interface{}) *Pipe {
+	return &Pipe{pipeline: pipeline, coll: c}
 }
 
-// Skip specifies the number of documents to skip before returning.
-// For server versions < 3.2, this defaults to 0.
-func (s *Session) Skip(skip int) *Session {
-	tmp := int64(skip)
-	s.skip = &tmp
-	return s
-}
+func (c *Collection) EnsureIndex(index Index) (err error) {
 
-// Sort specifies the order in which to return documents.
-func (s *Session) Sort(sort interface{}) *Session {
-	s.sort = sort
-	return s
-}
-
-func (s *Collection) EnsureIndex(index Index) (err error) {
-
-	_, err = s.collection.Indexes().CreateOne(context.TODO(), index.ToIndexModels())
+	models, err := index.ToIndexModels()
+	_, err = c.collection.Indexes().CreateOne(context.TODO(), models)
 	return err
 }
-
-func (c *Collection) DropIndex(field string) (err error) {
-	return nil
+func (c *Collection) DropAllIndexes() (err error) {
+	_, err = c.collection.Indexes().DropAll(nil)
+	return
 }
+func (c *Collection) DropIndex(key ...string) (err error) {
+	indexes, err := c.Indexes()
+	if err != nil {
+		return err
+	}
+	sort.Strings(key)
+	name := ""
+	for _, index := range indexes {
+		sort.Strings(index.Key)
 
-func (c *Collection) EnsureIndexKey(s string) (err error) {
+		if strings.Join(index.Key, "_") == strings.Join(key, "_") {
+			name = index.Name
+			break
+		}
+	}
+	if name == "" {
+		return ErrIndexNotFound
+	}
 
-	return nil
+	return c.DropIndexName(name)
 }
-
-func (c *Collection) DropCollection() error {
-	return c.collection.Drop(context.Background())
+func (c *Collection) DropIndexName(name string) error {
+	_, err := c.collection.Indexes().DropOne(nil, name)
+	return err
 }
-
-type CollectionInfo struct {
-	// DisableIdIndex prevents the automatic creation of the index
-	// on the _id field for the collection.
-
-	// ForceIdIndex enforces the automatic creation of the index
-	// on the _id field for the collection. Capped collections,
-	// for example, do not have such an index by default.
-	ForceIdIndex bool
-
-	// If Capped is true new documents will replace old ones when
-	// the collection is full. MaxBytes must necessarily be set
-	// to define the size when the collection wraps around.
-	// MaxDocs optionally defines the number of documents when it
-	// wraps, but MaxBytes still needs to be set.
-	Capped   bool
-	MaxBytes int
-	MaxDocs  int
-
-	// Validator contains a validation expression that defines which
-	// documents should be considered valid for this collection.
-	Validator interface{}
-
-	// ValidationLevel may be set to "strict" (the default) to force
-	// MongoDB to validate all documents on inserts and updates, to
-	// "moderate" to apply the validation rules only to documents
-	// that already fulfill the validation criteria, or to "off" for
-	// disabling validation entirely.
-	ValidationLevel string
-
-	// ValidationAction determines how MongoDB handles documents that
-	// violate the validation rules. It may be set to "error" (the default)
-	// to reject inserts or updates that violate the rules, or to "warn"
-	// to log invalid operations but allow them to proceed.
-	ValidationAction string
-
-	// StorageEngine allows specifying collection options for the
-	// storage engine in use. The map keys must hold the storage engine
-	// name for which options are being specified.
-	StorageEngine interface{}
-	// Specifies the default collation for the collection.
-	// Collation allows users to specify language-specific rules for string
-	// comparison, such as rules for lettercase and accent marks.
-	Collation *Collation
+func (c *Collection) EnsureIndexKey(key ...string) (err error) {
+	return c.EnsureIndex(Index{
+		Key: key,
+	})
 }
 
 func (c *Collection) Create(info *CollectionInfo) error {
@@ -306,8 +266,6 @@ func (c *Collection) Create(info *CollectionInfo) error {
 		}
 	}
 
-	if info.ForceIdIndex {
-	}
 	if info.Validator != nil {
 		opts.SetValidator(info.Validator)
 	}
@@ -326,11 +284,14 @@ func (c *Collection) Create(info *CollectionInfo) error {
 	return c.collection.Database().CreateCollection(context.Background(), c.collection.Name(), opts)
 }
 
-func (c *Collection) Indexes() (indexes []Index, err error) {
-	cursor, err := c.collection.Indexes().List(context.Background())
-	if err != nil {
-		return
-	}
-	err = cursor.Decode(&indexes)
-	return
+func (c *Collection) Bulk() *Bulk {
+	return &Bulk{c: c, ordered: true}
+}
+
+func (c *Collection) UpsertId(i interface{}, doc bson.M) (*ChangeInfo, error) {
+	return c.Upsert(bson.M{"_id": queryID(i)}, doc)
+}
+
+func (c *Collection) Database() *Database {
+	return c.db
 }

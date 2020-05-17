@@ -30,13 +30,6 @@ var NilObjectID = primitive.NilObjectID
 type D = primitive.D
 type RegEx = primitive.Regex
 
-
-
-type DocElem struct {
-	Name  string
-	Value interface{}
-}
-
 // E represents a BSON element for a D. It is usually used inside a D.
 type E = bson.E
 
@@ -65,14 +58,20 @@ type A = bson.A
 // ObjectID primitive.ObjectID
 type ObjectId = primitive.ObjectID
 
-
-
+var ErrInvalidHex = primitive.ErrInvalidHex
 
 // NewObjectID primitive.NewObjectID
 var NewObjectId = primitive.NewObjectID
 
 // ObjectIDHex primitive.ObjectIDFromHex
-var ObjectIDFromHex = primitive.ObjectIDFromHex
+func ObjectIDFromHex(s string) (ObjectId, error) {
+	obj, err := primitive.ObjectIDFromHex(s)
+	if err != nil {
+		return obj, ErrInvalidHex
+	}
+	return obj, nil
+}
+
 // ObjectIdHex returns an ObjectId from the provided hex representation.
 // Calling this function with an invalid hex representation will
 // cause a runtime panic. See the IsObjectIdHex function.
@@ -90,7 +89,7 @@ var Unmarshal = bson.Unmarshal
 
 // IsObjectIDHex returns whether s is a valid hex representation of
 // an ObjectId. See the ObjectIdHex function.
-func IsObjectIDHex(s string) bool {
+func IsObjectIdHex(s string) bool {
 	if len(s) != 24 {
 		return false
 	}

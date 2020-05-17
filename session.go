@@ -2,11 +2,11 @@ package mgo
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"github.com/Masterminds/semver"
 	"github.com/yaziming/mgo/bson"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/connstring"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
 	"net"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,7 +22,7 @@ var (
 	ErrNotFound = mongo.ErrNoDocuments
 	// ErrCursor multierror returned when trying to retrieve documents from
 	// an invalid cursor
-	ErrCursor = errors.New("invalid cursor")
+	//ErrCursor = errors.New("invalid cursor")
 )
 
 // ReadPreference defines the manner in which servers are chosen.
@@ -36,15 +36,15 @@ type ReadPreference struct {
 
 // Session session session
 type Session struct {
-	client   *mongo.Client
-	database string
-	uri      string
-	m        sync.RWMutex
-	filter   interface{}
-	limit    *int64
-	project  interface{}
-	skip     *int64
-	sort     interface{}
+	client    *mongo.Client
+	database  string
+	uri       string
+	m         sync.RWMutex
+	buildInfo BuildInfo
+}
+
+func (s *Session) Run(cmd interface{}, result interface{}) error {
+	return s.DB("admin").Run(cmd, result)
 }
 
 // New session
@@ -75,23 +75,14 @@ func NewFromMongoDriver(m *mongo.Client, database string) *Session {
 	return session
 }
 
-// C Collection alias
-func (s *Session) C(collection string) *Collection {
-	return s.Collection(collection)
-}
-
 func (s *Session) Close() {
 }
 
-// Collection returns collection
-func (s *Session) Collection(collection string) *Collection {
+// Collection returns coll
+func (s *Session) C(collection string) *Collection {
 	s.m.Lock()
 	defer s.m.Unlock()
-	if len(s.database) == 0 {
-		s.database = "test"
-	}
-	d := &Database{database: s.client.Database(s.database)}
-	return &Collection{collection: d.database.Collection(collection)}
+	return s.DB(s.database).C(collection)
 }
 
 // Connect session client
@@ -99,16 +90,20 @@ func (s *Session) Connect() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	opt := options.Client().SetSocketTimeout(1 * time.Minute).SetConnectTimeout(1 * time.Minute).ApplyURI(s.uri)
-
-	client, err := mongo.NewClient(opt)
+	client, err := mongo.Connect(ctx, opt)
 	if err != nil {
 		return err
 	}
-	err = client.Connect(ctx)
+	connectionString, err := connstring.ParseAndValidate(s.uri)
 	if err != nil {
 		return err
 	}
+	s.database = connectionString.Database
 	s.client = client
+	s.buildInfo, err = s.BuildInfo()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -119,9 +114,10 @@ func (s *Session) Ping() error {
 	return s.client.Ping(context.TODO(), readpref.Primary())
 }
 
-// DB returns a value representing the named database.
+// DB returns a value representing the named db.
 func (s *Session) DB(db string) *Database {
-	return &Database{database: s.client.Database(db)}
+	version, _ := semver.NewVersion(s.buildInfo.Version)
+	return &Database{version: version, database: s.client.Database(db)}
 }
 
 type BuildInfo struct {
@@ -129,7 +125,6 @@ type BuildInfo struct {
 	VersionArray   []int  `bson:"versionArray"` // On MongoDB 2.0+; assembled from Version otherwise
 	GitVersion     string `bson:"gitVersion"`
 	OpenSSLVersion string `bson:"OpenSSLVersion"`
-	SysInfo        string `bson:"sysInfo"` // Deprecated and empty on MongoDB 3.2+.
 	Bits           int
 	Debug          bool
 	MaxObjectSize  int `bson:"maxBsonObjectSize"`
@@ -144,18 +139,6 @@ type ChangeInfo struct {
 	UpsertedId interface{} // Upserted _id field, when not explicitly provided
 }
 
-func (c *Collection) Upsert(selector interface{}, update interface{}) (info *ChangeInfo, err error) {
-	r, err := c.collection.UpdateOne(context.Background(), selector, update, options.Update().SetUpsert(true))
-	if err != nil {
-		return
-	}
-	return &ChangeInfo{
-		Updated:    int(r.ModifiedCount),
-		Removed:    0,
-		Matched:    int(r.MatchedCount),
-		UpsertedId: r.UpsertedID,
-	}, nil
-}
 func (s *Session) BuildInfo() (info BuildInfo, err error) {
 
 	result := s.client.Database("admin").RunCommand(context.Background(), bson.M{"buildInfo": "1"})
@@ -182,9 +165,7 @@ func (s *Session) BuildInfo() (info BuildInfo, err error) {
 		// That information may be moved to another field if people need it.
 		info.GitVersion = info.GitVersion[:i]
 	}
-	if info.SysInfo == "deprecated" {
-		info.SysInfo = ""
-	}
+
 	return
 }
 
@@ -203,14 +184,6 @@ func (s *Session) Copy() *Session {
 	}
 }
 
-func ParseURL(url string) (op *options.ClientOptions, err error) {
-	if !strings.HasPrefix(url, "mongodb://") && !strings.HasPrefix(url, "mongodb+srv://") {
-		url = "mongodb://" + url
-	}
-	op = options.Client().ApplyURI(url)
-	return op, op.Validate()
-}
-
 // DialInfo holds options for establishing a session with a MongoDB cluster.
 // To use a URL, see the Dial function.
 type DialInfo struct {
@@ -223,7 +196,7 @@ type DialInfo struct {
 	// to be established. Timeout does not affect logic in DialServer.
 	Timeout time.Duration
 
-	// Database is the default database name used when the Session.DB method
+	// Database is the default db name used when the Session.DB method
 	// is called with an empty name, and is also used during the initial
 	// authentication if Source is unset.
 	Database string
@@ -234,7 +207,7 @@ type DialInfo struct {
 	// specified or discovered via the servers contacted.
 	ReplicaSetName string
 
-	// Source is the database used to establish credentials and privileges
+	// Source is the db used to establish credentials and privileges
 	// with a MongoDB server. Defaults to the value of Database, if that is
 	// set, or "admin" otherwise.
 	Source string
@@ -253,7 +226,7 @@ type DialInfo struct {
 	Mechanism string
 
 	// Username and Password inform the credentials for the initial authentication
-	// done on the database defined by the Source field. See Session.Login.
+	// done on the db defined by the Source field. See Session.Login.
 	Username string
 	Password string
 
@@ -318,6 +291,7 @@ type DialInfo struct {
 	// The maximum number of milliseconds that a connection can remain idle in the pool
 	// before being removed and closed.
 	MaxIdleTimeMS int
+	DialServer    func(addr *ServerAddr) (net.Conn, error)
 }
 type ServerAddr struct {
 	str string
@@ -329,10 +303,18 @@ func DialWithInfo(dialInfo *DialInfo) (session *Session, err error) {
 
 	defaultOptions := options.Client().
 		SetMinPoolSize(uint64(dialInfo.MinPoolSize)).
-		SetMaxConnIdleTime(time.Duration(dialInfo.MaxIdleTimeMS) * time.Millisecond).
-		SetAppName(dialInfo.AppName).
-		SetRetryReads(true).
-		SetHeartbeatInterval(100000).SetSocketTimeout(dialInfo.ReadTimeout).SetConnectTimeout(dialInfo.Timeout)
+		SetMaxConnIdleTime(time.Duration(dialInfo.MaxIdleTimeMS)).
+		SetAppName(dialInfo.AppName).SetConnectTimeout(dialInfo.Timeout)
+	socketTimeout := dialInfo.ReadTimeout
+	if dialInfo.WriteTimeout > socketTimeout {
+		socketTimeout = dialInfo.WriteTimeout
+	}
+	if socketTimeout > 0 {
+		defaultOptions.SetSocketTimeout(dialInfo.ReadTimeout)
+	}
+	if dialInfo.PoolLimit > 0 {
+		defaultOptions.SetMaxPoolSize(uint64(dialInfo.PoolLimit))
+	}
 	if !dialInfo.FailFast {
 		defaultOptions.SetRetryReads(true)
 		defaultOptions.SetRetryWrites(true)
@@ -351,67 +333,24 @@ func DialWithInfo(dialInfo *DialInfo) (session *Session, err error) {
 			PasswordSet: false,
 		})
 	}
+	if dialInfo.DialServer != nil {
+		var dialer topology.DialerFunc
+		dialer = func(ctx context.Context, network, address string) (net.Conn, error) {
+			tcpAddr, err := resolveAddr(address)
+			if err != nil {
+				return nil, err
+			}
+			return dialInfo.DialServer(&ServerAddr{
+				str: address,
+				tcp: tcpAddr,
+			})
+		}
+		defaultOptions.SetDialer(dialer)
+	}
 	client, err := mongo.Connect(context.TODO(), defaultOptions)
 	if err != nil {
 		return
 	}
 	session = NewFromMongoDriver(client, dialInfo.Database)
 	return session, nil
-}
-
-func isOptSep(c rune) bool {
-	return c == ';' || c == '&'
-}
-
-type urlInfo struct {
-	addrs   []string
-	user    string
-	pass    string
-	db      string
-	options []urlInfoOption
-}
-
-type urlInfoOption struct {
-	key   string
-	value string
-}
-
-func extractURL(s string) (*urlInfo, error) {
-	s = strings.TrimPrefix(s, "mongodb://")
-	info := &urlInfo{options: []urlInfoOption{}}
-
-	if c := strings.Index(s, "?"); c != -1 {
-		for _, pair := range strings.FieldsFunc(s[c+1:], isOptSep) {
-			l := strings.SplitN(pair, "=", 2)
-			if len(l) != 2 || l[0] == "" || l[1] == "" {
-				return nil, errors.New("connection option must be key=value: " + pair)
-			}
-			info.options = append(info.options, urlInfoOption{key: l[0], value: l[1]})
-		}
-		s = s[:c]
-	}
-	if c := strings.Index(s, "@"); c != -1 {
-		pair := strings.SplitN(s[:c], ":", 2)
-		if len(pair) > 2 || pair[0] == "" {
-			return nil, errors.New("credentials must be provided as user:pass@host")
-		}
-		var err error
-		info.user, err = url.QueryUnescape(pair[0])
-		if err != nil {
-			return nil, fmt.Errorf("cannot unescape username in URL: %q", pair[0])
-		}
-		if len(pair) > 1 {
-			info.pass, err = url.QueryUnescape(pair[1])
-			if err != nil {
-				return nil, fmt.Errorf("cannot unescape password in URL")
-			}
-		}
-		s = s[c+1:]
-	}
-	if c := strings.Index(s, "/"); c != -1 {
-		info.db = s[c+1:]
-		s = s[:c]
-	}
-	info.addrs = strings.Split(s, ",")
-	return info, nil
 }

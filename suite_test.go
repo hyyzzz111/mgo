@@ -3,6 +3,8 @@ package mgo
 import (
 	"context"
 	. "github.com/smartystreets/goconvey/convey"
+	"io/ioutil"
+	"log"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -10,16 +12,7 @@ import (
 	"testing"
 )
 
-const (
-	TestDbName = "mgo_test"
-)
-
-var (
-	TestCtx = context.TODO()
-)
-
 func GetDockerMongoC(ctx context.Context, username string, password string) (container testcontainers.Container, err error) {
-
 	req := testcontainers.ContainerRequest{
 		Image:        "mongo",
 		ExposedPorts: []string{"27017/tcp"},
@@ -34,8 +27,12 @@ func GetDockerMongoC(ctx context.Context, username string, password string) (con
 	return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 }
 func session() (session *Session, c testcontainers.Container, cancel func(), err error) {
+	return authSession("", "")
+}
+func authSession(username string, password string) (session *Session, c testcontainers.Container, cancel func(), err error) {
 	ctx := context.Background()
-	mongoC, err := GetDockerMongoC(ctx, "", "")
+	mongoC, err := GetDockerMongoC(ctx, username, password)
+
 	if err != nil {
 		return
 	}
@@ -48,9 +45,9 @@ func session() (session *Session, c testcontainers.Container, cancel func(), err
 		return
 	}
 	ipAdd := net.JoinHostPort(ip, natPort.Port())
-	s, err := Dial("mongodb://" + ipAdd + "/mgo_test")
+	s, err := Dial("mongodb://" + ipAdd + "/test")
 	return s, mongoC, func() {
-		mongoC.Terminate(ctx)
+		_ = mongoC.Terminate(ctx)
 	}, err
 }
 
@@ -61,11 +58,26 @@ type TestContext struct {
 }
 
 func MongoTest(t *testing.T, fn func(ctx *TestContext)) {
-	Convey("Boot Mongo By Docker", t, func() {
+	log.SetOutput(ioutil.Discard)
+	Convey("test mongo suites by docker", t, FailureHalts, func() {
 		ms, mc, cancel, err := session()
 		So(err, ShouldBeNil)
-		fn(&TestContext{mongo: ms, mongoC: mc,Context:context.Background()})
+		fn(&TestContext{mongo: ms, mongoC: mc, Context: context.Background()})
 
-		Reset(cancel)
+		Reset(func() {
+			cancel()
+		})
+	})
+}
+func AuthMongoTest(t *testing.T, fn func(ctx *TestContext)) {
+	log.SetOutput(ioutil.Discard)
+	Convey("test security mongo suites by docker", t, FailureHalts, func() {
+		ms, mc, cancel, err := authSession("crawlab", "crawlab_mgo")
+		So(err, ShouldBeNil)
+		fn(&TestContext{mongo: ms, mongoC: mc, Context: context.Background()})
+
+		Reset(func() {
+			cancel()
+		})
 	})
 }

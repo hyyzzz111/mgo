@@ -5,14 +5,12 @@ import (
 	"testing"
 )
 
-func TestObjectIdHex(t *testing.T){
-	Convey("TestObjectIdHex",t, func() {
-		Convey("Test Should Panic", func() {
-			So(func(){ObjectIdHex("!122")},ShouldPanic)
-			So(func(){ObjectIdHex("")},ShouldPanic)
-			oc,err:= ObjectIDFromHex("")
-			So(err,ShouldBeError)
-			So(oc,ShouldEqual,NilObjectID)
-		})
+func TestBSON_ObjectIdHex(t *testing.T) {
+	Convey("", t, func() {
+		So(func() { ObjectIdHex("!122") }, ShouldPanic)
+		So(func() { ObjectIdHex("") }, ShouldPanic)
+		oc, err := ObjectIDFromHex("")
+		So(err, ShouldBeError)
+		So(oc, ShouldEqual, NilObjectID)
 	})
 }

@@ -2,31 +2,23 @@ package mgo
 
 import (
 	"context"
+	"github.com/Masterminds/semver"
+	"github.com/yaziming/mgo/bson"
 	"go.mongodb.org/mongo-driver/mongo/gridfs"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// Database session-driver database
+// Database session-driver db
 type Database struct {
 	database *mongo.Database
+	version  *semver.Version
 }
 
-// CollectionNames returns the collection names present in database.
-func (d *Database) CollectionNames() (names []string, err error) {
-	names, err = d.database.ListCollectionNames(context.TODO(), options.ListCollectionsOptions{})
-	return
-}
-
-// C returns collection.
+// C returns coll.
 func (d *Database) C(collection string) *Collection {
-	return &Collection{collection: d.database.Collection(collection)}
-}
-
-// Collection returns collection.
-func (d *Database) Collection(collection string) *Collection {
-	return &Collection{collection: d.database.Collection(collection)}
+	return &Collection{db: d, collection: d.database.Collection(collection)}
 }
 
 func (d *Database) GridFS(prefix string) *GridFS {
@@ -36,8 +28,11 @@ func (d *Database) GridFS(prefix string) *GridFS {
 }
 
 func (d *Database) Run(bs interface{}, t interface{}) error {
-	o:=d.database.RunCommand(context.Background(),bs)
-	return o.Decode(&t)
+	o := d.database.RunCommand(context.Background(), bs)
+	if t == nil {
+		return nil
+	}
+	return o.Decode(t)
 }
 
 func (d *Database) DropDatabase() error {
@@ -45,4 +40,11 @@ func (d *Database) DropDatabase() error {
 }
 
 func (d *Database) Close() {
+}
+
+func (d *Database) CollectionNames() ([]string, error) {
+	return d.database.ListCollectionNames(nil, bson.M{})
+}
+func (d *Database) Version() *semver.Version {
+	return d.version
 }
