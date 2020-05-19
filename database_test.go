@@ -64,7 +64,17 @@ func TestDatabase_DropDatabase(t *testing.T) {
 		So(filterDBs(names), ShouldResemble, []string{})
 	})
 }
-
+func TestDatabase_Run(t *testing.T) {
+	MongoTest(t, func(ctx *TestContext) {
+		var err error
+		var session = ctx.mongo
+		db := session.DB("mydb")
+		err = db.Run("dbstats", nil)
+		So(err, ShouldBeNil)
+		err = db.Run(bson.M{"dbstats": 1}, nil)
+		So(err, ShouldBeNil)
+	})
+}
 func TestDatabase_CreateCollectionValidator(t *testing.T) {
 	MongoTest(t, func(ctx *TestContext) {
 		var err error
@@ -104,6 +114,7 @@ func TestDatabase_CreateCollectionValidator(t *testing.T) {
 		So(err, ShouldBeNil)
 		err = coll.Insert(M{"a": 1})
 		So(err, ShouldBeNil)
+
 		err = db.Run(bson.D{{Key: "collMod", Value: "mycoll"}, {Key: "validator", Value: M{"b": M{"$exists": true}}}}, nil)
 		So(err, ShouldBeNil)
 		err = coll.Insert(M{"a": 2})

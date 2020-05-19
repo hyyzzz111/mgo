@@ -27,8 +27,11 @@ func (d *Database) GridFS(prefix string) *GridFS {
 	return &GridFS{bucket: bucket, fileColl: &Collection{collection: bucket.GetFilesCollection()}}
 }
 
-func (d *Database) Run(bs interface{}, t interface{}) error {
-	o := d.database.RunCommand(context.Background(), bs)
+func (d *Database) Run(cmd interface{}, t interface{}) error {
+	if name, ok := cmd.(string); ok {
+		cmd = bson.D{{Key: name, Value: 1}}
+	}
+	o := d.database.RunCommand(context.Background(), cmd)
 	if t == nil {
 		return nil
 	}
