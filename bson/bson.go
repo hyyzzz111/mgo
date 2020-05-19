@@ -96,3 +96,5 @@ func IsObjectIdHex(s string) bool {
 	_, err := hex.DecodeString(s)
 	return err == nil
 }
+
+type Raw = bson.RawValue

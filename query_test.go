@@ -25,6 +25,35 @@ func TestQuery_Select(t *testing.T) {
 		So(err, ShouldBeError, ErrNotFound)
 	})
 }
+func TestQuery_RawDocument(t *testing.T) {
+	MongoTest(t, func(ctx *TestContext) {
+		var err error
+		session := ctx.mongo
+		coll := session.DB("mydb").C("mycoll")
+		err = coll.Insert(bson.M{"key": "w", "value": bson.M{"a": 1, "b": 2}})
+		var setting struct {
+			Key   string
+			Value bson.Raw
+		}
+		var R struct {
+			A int
+			B int
+		}
+		err = coll.Find(bson.M{"key": "w"}).One(&setting)
+		So(err, ShouldBeNil)
+		So(setting.Value, ShouldNotBeNil)
+		err = setting.Value.Unmarshal(&R)
+		So(err, ShouldBeNil)
+		So(R.A, ShouldEqual, 1)
+		So(R.B, ShouldEqual, 2)
+		b, err := bson.Marshal(R)
+		So(err, ShouldBeNil)
+		err = bson.Unmarshal(b, &R)
+		So(err, ShouldBeNil)
+		So(R.A, ShouldEqual, 1)
+		So(R.B, ShouldEqual, 2)
+	})
+}
 func TestQuery_InlineMap(t *testing.T) {
 	MongoTest(t, func(ctx *TestContext) {
 		var err error
