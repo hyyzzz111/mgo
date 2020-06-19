@@ -3,9 +3,9 @@ package mgo
 import (
 	"context"
 	"fmt"
-	"github.com/yaziming/mgo/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"mgo/bson"
 	"sort"
 	"strings"
 )

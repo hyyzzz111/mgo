@@ -3,7 +3,7 @@ package mgo
 import (
 	"flag"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/yaziming/mgo/bson"
+	"mgo/bson"
 	"strings"
 	"testing"
 	"time"

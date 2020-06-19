@@ -2,8 +2,8 @@ package mgo
 
 import (
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/yaziming/mgo/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"mgo/bson"
 	"testing"
 )
 

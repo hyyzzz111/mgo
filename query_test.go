@@ -3,7 +3,7 @@ package mgo
 import (
 	"github.com/davecgh/go-spew/spew"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/yaziming/mgo/bson"
+	"mgo/bson"
 	"sort"
 	"strings"
 	"testing"

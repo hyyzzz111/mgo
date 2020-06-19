@@ -2,7 +2,7 @@ package mgo
 
 import (
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/yaziming/mgo/bson"
+	"mgo/bson"
 	"sort"
 	"testing"
 )
