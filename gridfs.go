@@ -1,8 +1,8 @@
 package mgo
 
 import (
+	"github.com/yaziming/mgo/bson"
 	"go.mongodb.org/mongo-driver/mongo/gridfs"
-	"mgo/bson"
 )
 
 type GridFS struct {

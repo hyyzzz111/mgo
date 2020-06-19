@@ -2,9 +2,9 @@ package mgo
 
 import (
 	"bytes"
+	"github.com/yaziming/mgo/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"mgo/bson"
 )
 
 type Bulk struct {

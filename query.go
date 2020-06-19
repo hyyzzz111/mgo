@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"mgo/bson"
+	"github.com/yaziming/mgo/bson"
 )
 
 type op struct {

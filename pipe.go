@@ -2,10 +2,10 @@ package mgo
 
 import (
 	"context"
+	"github.com/yaziming/mgo/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"mgo/bson"
 	"time"
 )
 

@@ -3,7 +3,7 @@ package mgo
 import (
 	"context"
 	"errors"
-	"mgo/bson"
+	"github.com/yaziming/mgo/bson"
 	"sort"
 	"time"
 

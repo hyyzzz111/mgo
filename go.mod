@@ -1,4 +1,4 @@
-module mgo
+module github.com/yaziming/mgo
 
 go 1.12
 
