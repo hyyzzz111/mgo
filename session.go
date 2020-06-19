@@ -3,9 +3,9 @@ package mgo
 import (
 	"context"
 	"github.com/Masterminds/semver"
-	"github.com/yaziming/mgo/bson"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/connstring"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
+	"mgo/bson"
 	"net"
 	"strconv"
 	"strings"
